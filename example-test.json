@@ -1,0 +1,45 @@
+{
+  "test_cases": [
+    {
+      "name": "Good Deal - Should PASS",
+      "input": {
+        "text": "Beautiful 3-bedroom house for sale at 123 Main Street, Austin, TX 78701. Price: $250,000. 1,500 square feet. 2 bathrooms. Built in 2010. Large lot with backyard. Perfect for families."
+      },
+      "expected_decision": "PASS",
+      "expected_score_range": [60, 100],
+      "notes": "Meets multiple criteria: good price per sqft ($166/sqft), target price range, 3 bedrooms, good size"
+    },
+    {
+      "name": "Expensive Property - Should REJECT",
+      "input": {
+        "text": "Luxury 5-bedroom mansion at 456 Oak Avenue, Beverly Hills, CA 90210. $2,500,000. 4,000 sqft. 4.5 bathrooms. Built in 2020."
+      },
+      "expected_decision": "REJECT",
+      "expected_score_range": [0, 59],
+      "notes": "Too expensive, too large, outside price range"
+    },
+    {
+      "name": "Small Condo - Borderline",
+      "input": {
+        "text": "Cozy 1-bedroom condo at 789 Pine Street, Seattle, WA 98101. $180,000. 650 sqft. 1 bathroom. Built in 2005."
+      },
+      "expected_decision": "REJECT",
+      "expected_score_range": [0, 59],
+      "notes": "Small size, only 1 bedroom, might score low"
+    },
+    {
+      "name": "Townhouse in Range",
+      "input": {
+        "text": "Modern townhouse for sale at 321 Elm Drive, Denver, CO 80202. $320,000. 1,800 sqft. 3 bedrooms, 2.5 bathrooms. Built in 2015."
+      },
+      "expected_decision": "PASS",
+      "expected_score_range": [60, 100],
+      "notes": "Townhouse preferred type, good size, in price range"
+    }
+  ],
+  "webhook_test_commands": {
+    "curl": "curl -X POST https://your-n8n-instance.com/webhook/real-estate-deal -H 'Content-Type: application/json' -d '{\"text\": \"3-bedroom house, $250k, 1500 sqft, Austin TX\"}'",
+    "python": "import requests\nresponse = requests.post('https://your-n8n-instance.com/webhook/real-estate-deal', json={'text': '3-bedroom house, $250k, 1500 sqft, Austin TX'})\nprint(response.json())",
+    "javascript": "fetch('https://your-n8n-instance.com/webhook/real-estate-deal', {\n  method: 'POST',\n  headers: {'Content-Type': 'application/json'},\n  body: JSON.stringify({text: '3-bedroom house, $250k, 1500 sqft, Austin TX'})\n}).then(r => r.json()).then(console.log)"
+  }
+}

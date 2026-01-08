@@ -1,0 +1,211 @@
+{
+  "name": "Instant Real Estate Deal Engine",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "real-estate-deal",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 300],
+      "webhookId": "real-estate-deal-webhook"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "listing-text",
+              "name": "listingText",
+              "value": "={{ $json.body.text || $json.body.listingText || $json.body }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "extract-text",
+      "name": "Extract Listing Text",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o",
+        "options": {
+          "temperature": 0,
+          "maxTokens": 2000,
+          "responseFormat": {
+            "type": "json_object"
+          }
+        },
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are a real estate data extraction specialist. Extract structured data from real estate listings and return ONLY valid JSON matching the exact schema provided."
+            },
+            {
+              "role": "user",
+              "content": "={{ 'Extract the following information from this real estate listing as JSON:\n\nSchema:\n{\n  \"address\": \"string (full address)\",\n  \"price\": \"number (price in USD)\",\n  \"propertyType\": \"string (house, condo, apartment, townhouse, land, commercial, etc)\",\n  \"squareFeet\": \"number (living area in sq ft)\",\n  \"bedrooms\": \"number (integer)\",\n  \"bathrooms\": \"number (can be decimal like 2.5)\",\n  \"yearBuilt\": \"number (year, null if unknown)\",\n  \"lotSize\": \"number (in square feet, null if unknown)\",\n  \"city\": \"string\",\n  \"state\": \"string (2-letter abbreviation)\",\n  \"zipCode\": \"string\",\n  \"description\": \"string (brief summary, max 200 chars)\"\n}\n\nListing text:\n' + $json.listingText }}"
+            }
+          ]
+        },
+        "authentication": "predefinedCredentialType",
+        "credentialType": "openAiApi"
+      },
+      "id": "openai-extract",
+      "name": "OpenAI Extract Data",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1.3,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse OpenAI JSON response\nconst openaiResponse = $input.item.json;\nlet extractedData;\n\ntry {\n  if (typeof openaiResponse.choices?.[0]?.message?.content === 'string') {\n    extractedData = JSON.parse(openaiResponse.choices[0].message.content);\n  } else if (openaiResponse.choices?.[0]?.message?.content) {\n    extractedData = openaiResponse.choices[0].message.content;\n  } else {\n    throw new Error('Invalid OpenAI response format');\n  }\n} catch (error) {\n  throw new Error(`Failed to parse OpenAI response: ${error.message}`);\n}\n\n// Validate required fields\nconst required = ['address', 'price', 'propertyType'];\nfor (const field of required) {\n  if (!extractedData[field]) {\n    throw new Error(`Missing required field: ${field}`);\n  }\n}\n\n// Calculate investment metrics\nconst price = parseFloat(extractedData.price) || 0;\nconst sqft = parseFloat(extractedData.squareFeet) || 0;\nconst bedrooms = parseFloat(extractedData.bedrooms) || 0;\nconst bathrooms = parseFloat(extractedData.bathrooms) || 0;\n\n// Price per square foot\nconst pricePerSqft = sqft > 0 ? price / sqft : null;\n\n// Apply investment rules (deterministic)\nlet decision = 'REJECT';\nlet decisionReason = '';\nlet score = 0;\n\n// Rule 1: Price per square foot (target: < $150/sqft for residential)\nif (pricePerSqft && pricePerSqft < 150) {\n  score += 30;\n  decisionReason += 'Good price per sqft. ';\n} else if (pricePerSqft && pricePerSqft < 200) {\n  score += 15;\n} else if (pricePerSqft) {\n  score -= 10;\n  decisionReason += 'High price per sqft. ';\n}\n\n// Rule 2: Property price range (target: $50k - $500k)\nif (price >= 50000 && price <= 500000) {\n  score += 25;\n  decisionReason += 'Price in target range. ';\n} else if (price > 500000 && price <= 750000) {\n  score += 10;\n} else if (price < 50000 || price > 750000) {\n  score -= 15;\n  decisionReason += 'Price outside optimal range. ';\n}\n\n// Rule 3: Bedrooms (target: 2-4 for residential)\nif (bedrooms >= 2 && bedrooms <= 4) {\n  score += 15;\n  decisionReason += 'Good bedroom count. ';\n} else if (bedrooms >= 1 && bedrooms <= 5) {\n  score += 5;\n}\n\n// Rule 4: Square footage (target: 800-2500 sqft)\nif (sqft >= 800 && sqft <= 2500) {\n  score += 20;\n  decisionReason += 'Good size. ';\n} else if (sqft >= 600 && sqft <= 3000) {\n  score += 10;\n} else if (sqft > 0) {\n  score -= 5;\n}\n\n// Rule 5: Property type preference\nconst preferredTypes = ['house', 'townhouse', 'condo'];\nif (preferredTypes.includes(extractedData.propertyType?.toLowerCase())) {\n  score += 10;\n  decisionReason += 'Preferred property type. ';\n}\n\n// Decision threshold: score >= 60 = PASS\nif (score >= 60) {\n  decision = 'PASS';\n  decisionReason = 'Meets investment criteria: ' + decisionReason.trim();\n} else {\n  decisionReason = 'Does not meet criteria: ' + decisionReason.trim();\n}\n\n// Prepare final data object\nconst result = {\n  ...extractedData,\n  pricePerSqft: pricePerSqft ? Math.round(pricePerSqft * 100) / 100 : null,\n  investmentScore: score,\n  decision: decision,\n  decisionReason: decisionReason.trim(),\n  processedAt: new Date().toISOString()\n};\n\nreturn result;"
+      },
+      "id": "apply-rules",
+      "name": "Apply Investment Rules",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "base": "={{ $env.AIRTABLE_BASE_ID }}",
+        "table": "Real Estate Deals",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Address": "={{ $json.address }}",
+            "Price": "={{ $json.price }}",
+            "Property Type": "={{ $json.propertyType }}",
+            "Square Feet": "={{ $json.squareFeet }}",
+            "Bedrooms": "={{ $json.bedrooms }}",
+            "Bathrooms": "={{ $json.bathrooms }}",
+            "Year Built": "={{ $json.yearBuilt }}",
+            "Lot Size": "={{ $json.lotSize }}",
+            "City": "={{ $json.city }}",
+            "State": "={{ $json.state }}",
+            "Zip Code": "={{ $json.zipCode }}",
+            "Description": "={{ $json.description }}",
+            "Price per Sqft": "={{ $json.pricePerSqft }}",
+            "Investment Score": "={{ $json.investmentScore }}",
+            "Decision": "={{ $json.decision }}",
+            "Decision Reason": "={{ $json.decisionReason }}",
+            "Processed At": "={{ $json.processedAt }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "save-airtable",
+      "name": "Save to Airtable",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [1120, 300],
+      "credentials": {
+        "airtableApi": {
+          "id": "airtable-credential",
+          "name": "Airtable API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": true, \"decision\": $json.decision, \"score\": $json.investmentScore, \"id\": $json.processedAt } }}",
+        "options": {}
+      },
+      "id": "webhook-response",
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": false, \"error\": $json.error?.message || \"Unknown error\" } }}",
+        "options": {}
+      },
+      "id": "error-response",
+      "name": "Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 500]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Extract Listing Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Listing Text": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Extract Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Extract Data": {
+      "main": [
+        [
+          {
+            "node": "Apply Investment Rules",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Investment Rules": {
+      "main": [
+        [
+          {
+            "node": "Save to Airtable",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to Airtable": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2024-01-01T00:00:00.000Z",
+  "versionId": "1"
+}
