@@ -1,0 +1,36 @@
+Extract real estate data from this listing and return ONLY valid JSON (no markdown, no explanations, no code blocks, no extra text):
+
+JSON Schema:
+{
+  "property_title": "string",
+  "asking_price": number | null,
+  "renovation_estimate": number | null,
+  "airbnb_legal": boolean | null,
+  "ai_summary": "string",
+  "ai_verdict": "🟢 BUY" | "🔴 PASS" | "🟡 HUMAN REVIEW"
+}
+
+Extraction Rules:
+1. property_title: Extract the property address or title. Use "Unknown Property" if not found.
+2. asking_price: Extract price in USD as a number. Set to null if price cannot be confidently extracted from the text.
+3. renovation_estimate: Extract renovation/repair cost estimate in USD as a number. Set to null if not mentioned or unclear.
+4. airbnb_legal: Infer strictly from the listing text. Set to true only if text explicitly states short-term rentals, Airbnb, or vacation rentals are allowed/permitted. Set to false if explicitly prohibited. Set to null if not mentioned or unclear.
+5. ai_summary: Brief summary of the property (max 200 characters).
+
+Verdict Logic (CRITICAL - Apply exactly):
+1. If (asking_price + renovation_estimate < 400000) AND (airbnb_legal === true) → "🟢 BUY"
+2. Else if asking_price is null OR renovation_estimate is null OR airbnb_legal is null → "🟡 HUMAN REVIEW"
+3. Else → "🔴 PASS"
+
+Important:
+- Return ONLY the JSON object, nothing else
+- Do not wrap in markdown code blocks
+- Do not include explanations
+- Do not include backticks
+- Ensure all strings are properly quoted
+- Ensure numbers are not quoted
+- Ensure null values are the literal null (not the string "null")
+- Ensure boolean values are true/false (not strings)
+
+Listing text:
+{listing_text}
