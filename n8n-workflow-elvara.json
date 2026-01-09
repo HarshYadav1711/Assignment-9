@@ -1,0 +1,326 @@
+{
+  "name": "Instant Real Estate Deal Engine",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "real-estate-deal",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-receive-listing",
+      "name": "Webhook - Receive Listing",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 300],
+      "webhookId": "real-estate-deal-webhook"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "validate-input",
+              "leftValue": "={{ $json.body.listing_text && $json.body.listing_text.trim().length > 0 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "validate-listing-text-input",
+      "name": "Validate Listing Text Input",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "base": "={{ $env.AIRTABLE_BASE_ID }}",
+        "table": "Deal Opportunities",
+        "fields": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Property Title": "={{ \"Input Validation Required - \" + ($json.body.listing_text || \"No listing text provided\") }}",
+            "Asking Price": 0,
+            "Renovation Estimate": "={{ null }}",
+            "Is Airbnb Legal?": false,
+            "AI Verdict": "🟡 HUMAN REVIEW",
+            "AI Summary": "Input validation failed: listing_text is missing or empty. Manual review required to process this submission."
+          }
+        },
+        "options": {}
+      },
+      "id": "airtable-save-human-review-invalid-input",
+      "name": "Airtable - Save HUMAN REVIEW (Invalid Input)",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [460, 500],
+      "credentials": {
+        "airtableApi": {
+          "id": "airtable-credential",
+          "name": "Airtable API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o",
+        "options": {
+          "temperature": 0,
+          "maxTokens": 500,
+          "responseFormat": {
+            "type": "json_object"
+          }
+        },
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are a JSON extraction system. Extract real estate data and return ONLY valid JSON. No markdown, no explanations, no additional text. Output must be parseable JSON only."
+            },
+            {
+              "role": "user",
+              "content": "={{ 'Extract real estate data from this listing and return ONLY valid JSON (no markdown, no explanations, no code blocks, no extra text):\n\nJSON Schema:\n{\n  \"property_title\": \"string\",\n  \"asking_price\": number | null,\n  \"renovation_estimate\": number | null,\n  \"airbnb_legal\": boolean | null,\n  \"ai_summary\": \"string\",\n  \"ai_verdict\": \"🟢 BUY\" | \"🔴 PASS\" | \"🟡 HUMAN REVIEW\"\n}\n\nExtraction Rules:\n1. property_title: Extract the property address or title. Use \"Unknown Property\" if not found.\n2. asking_price: Extract price in USD as a number. Set to null if price cannot be confidently extracted from the text.\n3. renovation_estimate: Extract renovation/repair cost estimate in USD as a number. Set to null if not mentioned or unclear.\n4. airbnb_legal: Infer strictly from the listing text. Set to true only if text explicitly states short-term rentals, Airbnb, or vacation rentals are allowed/permitted. Set to false if explicitly prohibited. Set to null if not mentioned or unclear.\n5. ai_summary: Brief summary of the property (max 200 characters).\n\nVerdict Logic (CRITICAL - Apply exactly):\n1. If (asking_price + renovation_estimate < 400000) AND (airbnb_legal === true) → \"🟢 BUY\"\n2. Else if asking_price is null OR renovation_estimate is null OR airbnb_legal is null → \"🟡 HUMAN REVIEW\"\n3. Else → \"🔴 PASS\"\n\nImportant:\n- Return ONLY the JSON object, nothing else\n- Do not wrap in markdown code blocks\n- Do not include explanations\n- Do not include backticks\n- Ensure all strings are properly quoted\n- Ensure numbers are not quoted\n- Ensure null values are the literal null (not the string \"null\")\n- Ensure boolean values are true/false (not strings)\n\nListing text: ' + $json.body.listing_text }}"
+            }
+          ]
+        },
+        "authentication": "predefinedCredentialType",
+        "credentialType": "openAiApi",
+        "continueOnFail": true
+      },
+      "id": "openai-extract-deal-data",
+      "name": "OpenAI - Extract Deal Data",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1.3,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get OpenAI response\nconst openaiResponse = $input.item.json;\nlet parsedData;\nlet errorMessage = null;\n\ntry {\n  // Parse JSON from OpenAI response\n  const jsonString = openaiResponse.choices?.[0]?.message?.content;\n  \n  if (!jsonString) {\n    throw new Error('OpenAI response missing content');\n  }\n  \n  parsedData = JSON.parse(jsonString);\n  \n  // Validate required fields\n  if (!parsedData.hasOwnProperty('ai_verdict')) {\n    throw new Error('Missing ai_verdict field in response');\n  }\n  \n  // Validate verdict value\n  const validVerdicts = ['🟢 BUY', '🔴 PASS', '🟡 HUMAN REVIEW'];\n  if (!validVerdicts.includes(parsedData.ai_verdict)) {\n    throw new Error(`Invalid verdict: ${parsedData.ai_verdict}`);\n  }\n  \n  // Success - return parsed data\n  return {\n    success: true,\n    data: parsedData,\n    originalResponse: openaiResponse\n  };\n  \n} catch (error) {\n  // JSON parsing or validation failed\n  errorMessage = error.message;\n  \n  // Return error data for HUMAN REVIEW path\n  return {\n    success: false,\n    error: errorMessage,\n    errorType: 'JSON_PARSE_OR_VALIDATION_ERROR',\n    originalResponse: openaiResponse,\n    listingText: $('Webhook - Receive Listing').item.json.body.listing_text\n  };\n}"
+      },
+      "id": "parse-json-validate-verdict",
+      "name": "Parse JSON and Validate Verdict",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "route-parse-result",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "route-parse-result",
+      "name": "Route Parse Result",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const inputData = $input.item.json;\n\n// Determine error source and message\nlet errorType = 'Unknown Error';\nlet errorMessage = 'AI processing failed';\nlet listingText = '';\n\nif (inputData.errorType === 'JSON_PARSE_OR_VALIDATION_ERROR') {\n  // JSON parsing/validation error from Parse node\n  errorType = 'JSON Parse/Validation Error';\n  errorMessage = inputData.error || 'Failed to parse or validate OpenAI response';\n  listingText = inputData.listingText || '';\n} else if (inputData.error) {\n  // OpenAI API error (from error output)\n  errorType = 'OpenAI API Error';\n  errorMessage = inputData.error.message || inputData.error.name || 'OpenAI API call failed';\n  listingText = $('Webhook - Receive Listing').item.json.body.listing_text || '';\n} else {\n  // Fallback\n  listingText = $('Webhook - Receive Listing').item.json.body.listing_text || '';\n}\n\n// Extract property title from listing text (first 50 chars or \"Unknown\")\nconst propertyTitle = listingText \n  ? (listingText.substring(0, 50).trim() + (listingText.length > 50 ? '...' : ''))\n  : 'Unknown Property';\n\n// Format summary\nconst summary = `AI processing failed: ${errorMessage}. Error type: ${errorType}. Manual review required.`;\n\n// Return formatted record with correct data types\nreturn {\n  property_title: propertyTitle,  // String\n  asking_price: null,              // Number (null) - Currency field\n  renovation_estimate: null,       // Number (null) - Currency field\n  airbnb_legal: false,             // Boolean (false) - Checkbox field (not null)\n  ai_verdict: '🟡 HUMAN REVIEW',  // String (exact match for single select)\n  ai_summary: summary,             // String\n  original_listing_text: listingText\n};"
+      },
+      "id": "format-error-record",
+      "name": "Format Error Record for HUMAN REVIEW",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 500]
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "base": "={{ $env.AIRTABLE_BASE_ID }}",
+        "table": "Deal Opportunities",
+        "fields": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Property Title": "={{ $json.data.property_title }}",
+            "Asking Price": "={{ $json.data.asking_price ?? null }}",
+            "Renovation Estimate": "={{ $json.data.renovation_estimate ?? null }}",
+            "Is Airbnb Legal?": "={{ $json.data.airbnb_legal ?? false }}",
+            "AI Verdict": "={{ $json.data.ai_verdict }}",
+            "AI Summary": "={{ $json.data.ai_summary }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "airtable-save-deal-opportunity",
+      "name": "Airtable - Save Deal Opportunity",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [1340, 300],
+      "credentials": {
+        "airtableApi": {
+          "id": "airtable-credential",
+          "name": "Airtable API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "base": "={{ $env.AIRTABLE_BASE_ID }}",
+        "table": "Deal Opportunities",
+        "fields": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Property Title": "={{ $json.property_title }}",
+            "Asking Price": "={{ $json.asking_price }}",
+            "Renovation Estimate": "={{ $json.renovation_estimate }}",
+            "Is Airbnb Legal?": "={{ $json.airbnb_legal }}",
+            "AI Verdict": "={{ $json.ai_verdict }}",
+            "AI Summary": "={{ $json.ai_summary }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "airtable-save-human-review-error",
+      "name": "Airtable - Save HUMAN REVIEW (Error)",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [1340, 500],
+      "credentials": {
+        "airtableApi": {
+          "id": "airtable-credential",
+          "name": "Airtable API"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook - Receive Listing": {
+      "main": [
+        [
+          {
+            "node": "Validate Listing Text Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Listing Text Input": {
+      "main": [
+        [
+          {
+            "node": "OpenAI - Extract Deal Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Airtable - Save HUMAN REVIEW (Invalid Input)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI - Extract Deal Data": {
+      "main": [
+        [
+          {
+            "node": "Parse JSON and Validate Verdict",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI - Extract Deal Data": {
+      "error": [
+        [
+          {
+            "node": "Format Error Record for HUMAN REVIEW",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse JSON and Validate Verdict": {
+      "main": [
+        [
+          {
+            "node": "Route Parse Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Parse Result": {
+      "main": [
+        [
+          {
+            "node": "Airtable - Save Deal Opportunity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Error Record for HUMAN REVIEW",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Error Record for HUMAN REVIEW": {
+      "main": [
+        [
+          {
+            "node": "Airtable - Save HUMAN REVIEW (Error)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "timezone": "America/New_York",
+    "executionTimeout": 30
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2024-01-01T00:00:00.000Z",
+  "versionId": "1"
+}

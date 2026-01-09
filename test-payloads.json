@@ -1,0 +1,101 @@
+{
+  "test_cases": [
+    {
+      "name": "Valid Input - Should Process",
+      "description": "Valid listing text that should be processed by AI",
+      "payload": {
+        "listing_text": "Beautiful 3-bedroom house for sale at 123 Main Street, Austin, TX 78701. Price: $250,000. 1,500 square feet. 2 bathrooms. Built in 2010. Large lot with backyard. Short-term rentals and Airbnb are permitted in this area."
+      },
+      "expected_result": "Record created in Airtable with AI-extracted data",
+      "expected_verdict": "🟢 BUY (price $250k + renovation < $400k, Airbnb legal)",
+      "expected_latency": "< 30 seconds"
+    },
+    {
+      "name": "Invalid Input - Missing Field",
+      "description": "Missing listing_text field should route to HUMAN REVIEW",
+      "payload": {},
+      "expected_result": "HUMAN REVIEW record created immediately",
+      "expected_verdict": "🟡 HUMAN REVIEW",
+      "expected_latency": "< 2 seconds"
+    },
+    {
+      "name": "Invalid Input - Empty String",
+      "description": "Empty listing_text should route to HUMAN REVIEW",
+      "payload": {
+        "listing_text": ""
+      },
+      "expected_result": "HUMAN REVIEW record created immediately",
+      "expected_verdict": "🟡 HUMAN REVIEW",
+      "expected_latency": "< 2 seconds"
+    },
+    {
+      "name": "Invalid Input - Whitespace Only",
+      "description": "Whitespace-only listing_text should route to HUMAN REVIEW",
+      "payload": {
+        "listing_text": "   "
+      },
+      "expected_result": "HUMAN REVIEW record created immediately",
+      "expected_verdict": "🟡 HUMAN REVIEW",
+      "expected_latency": "< 2 seconds"
+    },
+    {
+      "name": "Valid Input - High Price (Should PASS)",
+      "description": "High price property that should get 🔴 PASS verdict",
+      "payload": {
+        "listing_text": "Luxury 5-bedroom mansion at 456 Oak Avenue, Beverly Hills, CA 90210. $2,500,000. 4,000 sqft. 4.5 bathrooms. Built in 2020. Short-term rentals prohibited."
+      },
+      "expected_result": "Record created with 🔴 PASS verdict",
+      "expected_verdict": "🔴 PASS",
+      "expected_latency": "< 30 seconds"
+    },
+    {
+      "name": "Valid Input - Missing Data (Should HUMAN REVIEW)",
+      "description": "Property with missing price/renovation data",
+      "payload": {
+        "listing_text": "Cozy 2-bedroom condo at 789 Pine Street, Seattle, WA 98101. Contact for pricing. Renovation needed but cost TBD. Rental regulations unclear."
+      },
+      "expected_result": "Record created with 🟡 HUMAN REVIEW verdict",
+      "expected_verdict": "🟡 HUMAN REVIEW (missing data)",
+      "expected_latency": "< 30 seconds"
+    },
+    {
+      "name": "Valid Input - Borderline Case",
+      "description": "Property at threshold ($400k total)",
+      "payload": {
+        "listing_text": "3-bedroom townhouse at 321 Elm Drive, Denver, CO 80202. $350,000. 1,800 sqft. Needs $50,000 renovation. Airbnb allowed. Built in 2015."
+      },
+      "expected_result": "Record created (total = $400k, should be 🔴 PASS as >= 400k)",
+      "expected_verdict": "🔴 PASS",
+      "expected_latency": "< 30 seconds"
+    }
+  ],
+  "curl_examples": {
+    "valid_request": "curl -X POST https://your-n8n-instance.com/webhook/real-estate-deal -H 'Content-Type: application/json' -d '{\"listing_text\": \"3-bedroom house, $250k, Austin TX, Airbnb allowed\"}'",
+    "invalid_request": "curl -X POST https://your-n8n-instance.com/webhook/real-estate-deal -H 'Content-Type: application/json' -d '{}'"
+  },
+  "validation_checklist": {
+    "valid_input": [
+      "Workflow executes successfully",
+      "Record created in Airtable",
+      "All 6 fields populated correctly",
+      "AI Verdict is one of: 🟢 BUY, 🔴 PASS, 🟡 HUMAN REVIEW",
+      "Latency < 30 seconds",
+      "Record appears on dashboard"
+    ],
+    "invalid_input": [
+      "Workflow executes successfully (no errors)",
+      "HUMAN REVIEW record created",
+      "Property Title contains 'Input Validation Required'",
+      "AI Verdict is 🟡 HUMAN REVIEW",
+      "AI Summary explains validation failure",
+      "Latency < 2 seconds"
+    ],
+    "error_handling": [
+      "OpenAI errors create HUMAN REVIEW record",
+      "JSON parse errors create HUMAN REVIEW record",
+      "Workflow completes successfully (no failures)",
+      "Error summary explains what failed",
+      "All error records visible in Airtable"
+    ]
+  }
+}
